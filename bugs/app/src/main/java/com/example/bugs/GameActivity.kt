@@ -22,7 +22,6 @@ import com.example.bugs.managers.PlayerManager
 import com.example.bugs.models.Player
 import kotlin.random.Random
 
-// ИЗМЕНЕНО: Добавляем SensorEventListener
 class GameActivity : AppCompatActivity(), SensorEventListener {
 
     companion object {
@@ -47,7 +46,7 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
     private var gameSpeed = 0
     private var maxCockroaches = 0
     private var roundDuration = 0L
-    private var bonusInterval = 15000L // НОВОЕ: Интервал появления бонуса (в мс)
+    private var bonusInterval = 15000L
 
     // Игровое состояние
     private var score = 0
@@ -79,12 +78,11 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
         playerNameTextView = findViewById(R.id.textViewPlayerName)
         gameArea = findViewById(R.id.gameArea)
 
-        // Получаем данные из Intent
-        currentPlayer = getPlayerFromIntent() // ИЗМЕНЕНО: Убрано дублирование
+
+        currentPlayer = getPlayerFromIntent()
         gameSpeed = intent.getIntExtra(EXTRA_GAME_SPEED, 5)
         maxCockroaches = intent.getIntExtra(EXTRA_MAX_COCKROACHES, 10)
         roundDuration = intent.getIntExtra(EXTRA_ROUND_DURATION, 120).toLong()
-        // НОВОЕ: Получаем интервал бонуса
         bonusInterval = intent.getIntExtra(EXTRA_BONUS_INTERVAL, 15).toLong() * 1000
 
         if (currentPlayer == null) {
@@ -93,7 +91,7 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
             return
         }
 
-        playerNameTextView.text = "Игрок: ${currentPlayer!!.name}" // ИЗМЕНЕНО: Используем currentPlayer
+        playerNameTextView.text = "Игрок: ${currentPlayer!!.name}"
 
         // Слушатель для промахов
         gameArea.setOnClickListener {
@@ -102,11 +100,9 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
             }
         }
 
-        // НОВОЕ: Инициализация сенсора и звука
         setupSensors()
         setupSoundPool()
 
-        // Ждем отрисовки gameArea, чтобы получить ее размеры
         gameArea.post {
             gameAreaWidth = gameArea.width
             gameAreaHeight = gameArea.height
@@ -125,7 +121,7 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
         updateScore(0)
         startRoundTimer()
         gameHandler.post(spawner) // Запускаем спавн тараканов
-        gameHandler.postDelayed(bonusSpawner, bonusInterval) // НОВОЕ: Запускаем спавн бонусов
+        gameHandler.postDelayed(bonusSpawner, bonusInterval)
     }
 
     private fun startRoundTimer() {
@@ -223,7 +219,7 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
     }
 
     private fun moveCockroach(cockroachView: ImageView, maxX: Int, maxY: Int) {
-        // ИЗМЕНЕНО: Не двигаем, если бонус активен или жук удален
+
         if (!isGameRunning || !cockroaches.contains(cockroachView) || isBonusActive) return
 
         val newX = Random.nextInt(0, maxX).toFloat()
@@ -235,7 +231,7 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
             .y(newY)
             .setDuration(moveDuration.coerceAtLeast(500L))
             .withEndAction {
-                // ИЗМЕНЕНО: Запускаем новую анимацию, только если бонус НЕ активен
+
                 if (!isBonusActive) {
                     moveCockroach(cockroachView, maxX, maxY)
                 }
@@ -254,13 +250,11 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
     private fun endGame() {
         isGameRunning = false
         gameTimer.cancel()
-        gameHandler.removeCallbacksAndMessages(null) // Останавливаем все циклы (включая спавн)
+        gameHandler.removeCallbacksAndMessages(null)
 
-        // НОВОЕ: Убедимся, что бонус остановлен
         if (isBonusActive) {
             stopBonusEffect()
         }
-        // НОВОЕ: Удаляем бонус, если он был на экране
         bonusView?.let {
             gameArea.removeView(it)
             bonusView = null
@@ -286,13 +280,11 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
             gameTimer.cancel()
         }
         gameHandler.removeCallbacksAndMessages(null)
-        // НОВОЕ: Освобождаем ресурсы
         sensorManager.unregisterListener(this)
         soundPool?.release()
         soundPool = null
     }
 
-    // --- НОВЫЕ МЕТОДЫ ДЛЯ БОНУСА И СЕНСОРОВ ---
 
     private fun setupSensors() {
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -316,30 +308,24 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
     }
 
     private fun activateBonusEffect() {
-        if (accelerometer == null) return // Не можем активировать без сенсора
+        if (accelerometer == null) return
         isBonusActive = true
 
-        // 1. Воспроизводим звук
         soundPool?.play(bugScreamSoundId, 1.0f, 1.0f, 1, 0, 1.0f)
 
-        // 2. Останавливаем все текущие анимации
         cockroaches.forEach { it.animate().cancel() }
 
-        // 3. Регистрируем слушатель сенсора
         sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_GAME)
 
-        // 4. Устанавливаем таймер на отключение бонуса
         gameHandler.postDelayed({ stopBonusEffect() }, BONUS_LIFETIME_MS)
     }
 
     private fun stopBonusEffect() {
         isBonusActive = false
-        // 1. Отписываемся от сенсора
         sensorManager.unregisterListener(this)
 
-        // 2. Перезапускаем случайное движение для всех жуков
-        val maxX = gameAreaWidth - 130.dpToPx() // Приблизительная макс. ширина жука
-        val maxY = gameAreaHeight - 130.dpToPx() // Приблизительная макс. высота жука
+        val maxX = gameAreaWidth - 130.dpToPx()
+        val maxY = gameAreaHeight - 130.dpToPx()
         if (maxX > 0 && maxY > 0) {
             cockroaches.forEach { moveCockroach(it, maxX, maxY) }
         }
@@ -351,28 +337,14 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
             return
         }
 
-        // event.values[0] (x): Наклон влево/вправо.
-        //   - Положительный: наклон влево (экран "поднимается" слева)
-        //   - Отрицательный: наклон вправо
-        // event.values[1] (y): Наклон "от себя"/"на себя".
-        //   - Положительный: наклон "на себя" (низ телефона поднимается)
-        //   - Отрицательный: наклон "от себя"
-        // ПРИМЕЧАНИЕ: Оси сенсора (x, y) могут отличаться от осей экрана (x, y).
-        // Эти значения (gravityX, gravityY) работают для стандартной портретной ориентации.
-
         val gravityX = event.values[0]
         val gravityY = event.values[1]
 
-        // Двигаем каждого таракана
         cockroaches.forEach { cockroach ->
             val bugSize = cockroach.width.toFloat() // Используем реальный размер
 
-            // Ось X сенсора (values[0]) обычно инвертирована относительно оси X экрана.
-            // Наклон влево (gravityX > 0) должен двигать жука влево (уменьшать .x)
             var newX = cockroach.x - (gravityX * TILT_SENSITIVITY)
 
-            // Ось Y сенсора (values[1]) совпадает с осью Y экрана.
-            // Наклон "на себя" (gravityY > 0) должен двигать жука вниз (увеличивать .y)
             var newY = cockroach.y + (gravityY * TILT_SENSITIVITY)
 
             // Ограничиваем движение границами
@@ -389,7 +361,6 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
         // Не используется, но обязателен для реализации
     }
 
-    // --- КОНЕЦ НОВЫХ МЕТОДОВ ---
 
     private fun getPlayerFromIntent(): Player? {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
