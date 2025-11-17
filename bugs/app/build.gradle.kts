@@ -65,5 +65,19 @@ dependencies {
     implementation("androidx.room:room-runtime:2.8.1")
     ksp("androidx.room:room-compiler:2.8.1")
 
+    // --- НОВЫЕ ЗАВИСИМОСТИ (Добавьте это) ---
 
+    // Retrofit для сетевых запросов
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+
+    // Конвертер для парсинга XML (формат ЦБ РФ)
+    implementation("com.squareup.retrofit2:converter-simplexml:2.9.0") {
+        // Исключаем конфликтующие зависимости, так как Android уже имеет встроенные парсеры
+        exclude(group = "stax", module = "stax-api")
+        exclude(group = "stax", module = "stax")
+        exclude(group = "xpp3", module = "xpp3")
+    }
+
+    // Корутины для асинхронной работы (если еще не добавлены транзитивно)
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }

@@ -1,6 +1,8 @@
 package com.example.bugs
 
 import android.content.Context
+import android.graphics.Color
+import android.graphics.PorterDuff
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -18,8 +20,17 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.example.bugs.managers.PlayerManager
 import com.example.bugs.models.Player
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.random.Random
 
 class GameActivity : AppCompatActivity(), SensorEventListener {
@@ -31,24 +42,23 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
         const val EXTRA_BONUS_INTERVAL = "EXTRA_BONUS_INTERVAL"
         const val EXTRA_ROUND_DURATION = "EXTRA_ROUND_DURATION"
 
-        // НОВОЕ: Константы для бонуса
-        private const val BONUS_LIFETIME_MS = 1000L // 10 секунд действия бонуса
-        private const val TILT_SENSITIVITY = 4.5f // Чувствительность к наклону
+        private const val BONUS_LIFETIME_MS = 1000L
+        private const val TILT_SENSITIVITY = 4.5f
+
+        // НОВОЕ: Интервал золотого таракана
+        private const val GOLD_BUG_INTERVAL = 20000L
     }
 
-    // UI элементы
     private lateinit var scoreTextView: TextView
     private lateinit var timerTextView: TextView
     private lateinit var playerNameTextView: TextView
     private lateinit var gameArea: FrameLayout
 
-    // Параметры игры
     private var gameSpeed = 0
     private var maxCockroaches = 0
     private var roundDuration = 0L
-    private var bonusInterval = 15000L
+    private var bonusInterval = 1000L
 
-    // Игровое состояние
     private var score = 0
     private var currentPlayer: Player? = null
     private val cockroaches = mutableListOf<ImageView>()
@@ -56,7 +66,6 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
     private var isGameRunning = false
     private lateinit var gameTimer: CountDownTimer
 
-    // НОВОЕ: Для бонуса и сенсоров
     private var bonusView: ImageView? = null
     private var isBonusActive = false
     private lateinit var sensorManager: SensorManager
@@ -64,20 +73,20 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
     private var soundPool: SoundPool? = null
     private var bugScreamSoundId: Int = 0
 
-    // НОВОЕ: Размеры игровой области для сенсоров
     private var gameAreaWidth = 0
     private var gameAreaHeight = 0
+
+    // НОВОЕ: Переменная для курса золота
+    private var currentGoldPrice: Double = 0.0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_game)
 
-        // Инициализация UI
         scoreTextView = findViewById(R.id.textViewScore)
         timerTextView = findViewById(R.id.textViewTimer)
         playerNameTextView = findViewById(R.id.textViewPlayerName)
         gameArea = findViewById(R.id.gameArea)
-
 
         currentPlayer = getPlayerFromIntent()
         gameSpeed = intent.getIntExtra(EXTRA_GAME_SPEED, 5)
@@ -93,7 +102,6 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
 
         playerNameTextView.text = "Игрок: ${currentPlayer!!.name}"
 
-        // Слушатель для промахов
         gameArea.setOnClickListener {
             if (isGameRunning) {
                 updateScore(-1)
@@ -103,6 +111,9 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
         setupSensors()
         setupSoundPool()
 
+        // НОВОЕ: Загружаем курс золота при старте
+        fetchGoldPrice()
+
         gameArea.post {
             gameAreaWidth = gameArea.width
             gameAreaHeight = gameArea.height
@@ -110,9 +121,46 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
         }
     }
 
+    // НОВОЕ: Функция загрузки курса золота
+    private fun fetchGoldPrice() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                // Используем тот же метод ручного парсинга для надежности (или Retrofit из шага 2)
+                val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+                val date = sdf.format(Date())
+                val urlString = "https://www.cbr.ru/scripts/xml_metall.asp?date_req1=$date&date_req2=$date"
+
+                val url = URL(urlString)
+                val connection = url.openConnection()
+                val reader = BufferedReader(InputStreamReader(connection.getInputStream(), "windows-1251"))
+                val sb = StringBuilder()
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    sb.append(line)
+                }
+                reader.close()
+                val xml = sb.toString()
+
+                // Парсим цену золота (Code="1")
+                val codeIndex = xml.indexOf("Code=\"1\"")
+                if (codeIndex != -1) {
+                    val buyTag = "<Buy>"
+                    val start = xml.indexOf(buyTag, codeIndex) + buyTag.length
+                    val end = xml.indexOf("</Buy>", start)
+                    if (start > 0 && end > 0) {
+                        val priceStr = xml.substring(start, end).replace(",", ".")
+                        currentGoldPrice = priceStr.toDoubleOrNull() ?: 5000.0
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                currentGoldPrice = 5000.0 // Фолбэк значение
+            }
+        }
+    }
+
     private fun startGame() {
         if (gameAreaWidth == 0 || gameAreaHeight == 0) {
-            // Если размеры еще не получены, попробуем еще раз через мгновение
             gameArea.post { startGame() }
             return
         }
@@ -120,8 +168,11 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
         score = 0
         updateScore(0)
         startRoundTimer()
-        gameHandler.post(spawner) // Запускаем спавн тараканов
+        gameHandler.post(spawner)
         gameHandler.postDelayed(bonusSpawner, bonusInterval)
+
+        // НОВОЕ: Запуск спавнера золотого таракана
+        gameHandler.postDelayed(goldBugSpawner, GOLD_BUG_INTERVAL)
     }
 
     private fun startRoundTimer() {
@@ -138,36 +189,50 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
         }.start()
     }
 
-    // Игровой цикл для спавна тараканов
     private val spawner = object : Runnable {
         override fun run() {
             if (isGameRunning && cockroaches.size < maxCockroaches) {
-                spawnCockroach()
+                spawnCockroach(isGold = false)
             }
             val spawnInterval = 1000L / gameSpeed
             gameHandler.postDelayed(this, spawnInterval)
         }
     }
 
-    // НОВОЕ: Игровой цикл для спавна бонусов
     private val bonusSpawner = object : Runnable {
         override fun run() {
             if (isGameRunning && bonusView == null && !isBonusActive) {
                 spawnBonus()
             }
-            // Планируем следующий запуск
             gameHandler.postDelayed(this, bonusInterval)
         }
     }
 
-    private fun spawnCockroach() {
+    // НОВОЕ: Спавнер золотого таракана
+    private val goldBugSpawner = object : Runnable {
+        override fun run() {
+            if (isGameRunning) {
+                spawnCockroach(isGold = true)
+            }
+            gameHandler.postDelayed(this, GOLD_BUG_INTERVAL)
+        }
+    }
+
+    // Изменили сигнатуру для поддержки золотых тараканов
+    private fun spawnCockroach(isGold: Boolean) {
         val cockroachView = ImageView(this)
         cockroachView.setImageResource(R.drawable.cockroach)
-        val size = (80 + Random.nextInt(0, 50)).dpToPx()
+
+        // НОВОЕ: Если золотой, красим его и увеличиваем
+        if (isGold) {
+            cockroachView.setColorFilter(Color.parseColor("#FFD700"), PorterDuff.Mode.SRC_IN)
+        }
+
+        val baseSize = if (isGold) 120 else 80
+        val size = (baseSize + Random.nextInt(0, 50)).dpToPx()
         val params = FrameLayout.LayoutParams(size, size)
         cockroachView.layoutParams = params
 
-        // Размеры уже должны быть известны к этому моменту
         val maxX = gameAreaWidth - size
         val maxY = gameAreaHeight - size
 
@@ -180,19 +245,25 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
 
             cockroachView.setOnClickListener {
                 if (isGameRunning) {
-                    updateScore(2)
+                    if (isGold) {
+                        // НОВОЕ: Очки пропорционально курсу золота (делим на 100 для баланса)
+                        val points = (currentGoldPrice / 100).toInt().coerceAtLeast(10)
+                        updateScore(points)
+                        Toast.makeText(this, "+$points Gold!", Toast.LENGTH_SHORT).show()
+                    } else {
+                        updateScore(2)
+                    }
                     gameArea.removeView(it)
                     cockroaches.remove(it)
                 }
             }
-            // Запускаем движение, если бонус не активен
+
             if (!isBonusActive) {
                 moveCockroach(cockroachView, maxX, maxY)
             }
         }
     }
 
-    // НОВОЕ: Спавн бонуса
     private fun spawnBonus() {
         bonusView = ImageView(this).apply {
             setImageResource(R.drawable.ic_bonus)
@@ -219,7 +290,6 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
     }
 
     private fun moveCockroach(cockroachView: ImageView, maxX: Int, maxY: Int) {
-
         if (!isGameRunning || !cockroaches.contains(cockroachView) || isBonusActive) return
 
         val newX = Random.nextInt(0, maxX).toFloat()
@@ -231,7 +301,6 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
             .y(newY)
             .setDuration(moveDuration.coerceAtLeast(500L))
             .withEndAction {
-
                 if (!isBonusActive) {
                     moveCockroach(cockroachView, maxX, maxY)
                 }
@@ -241,9 +310,7 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
 
     private fun updateScore(change: Int) {
         score += change
-        if (score < 0) {
-            score = 0
-        }
+        if (score < 0) score = 0
         scoreTextView.text = "Счет: $score"
     }
 
@@ -276,15 +343,12 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
 
     override fun onDestroy() {
         super.onDestroy()
-        if (::gameTimer.isInitialized) {
-            gameTimer.cancel()
-        }
+        if (::gameTimer.isInitialized) gameTimer.cancel()
         gameHandler.removeCallbacksAndMessages(null)
         sensorManager.unregisterListener(this)
         soundPool?.release()
         soundPool = null
     }
-
 
     private fun setupSensors() {
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -310,20 +374,15 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
     private fun activateBonusEffect() {
         if (accelerometer == null) return
         isBonusActive = true
-
         soundPool?.play(bugScreamSoundId, 1.0f, 1.0f, 1, 0, 1.0f)
-
         cockroaches.forEach { it.animate().cancel() }
-
         sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_GAME)
-
         gameHandler.postDelayed({ stopBonusEffect() }, BONUS_LIFETIME_MS)
     }
 
     private fun stopBonusEffect() {
         isBonusActive = false
         sensorManager.unregisterListener(this)
-
         val maxX = gameAreaWidth - 130.dpToPx()
         val maxY = gameAreaHeight - 130.dpToPx()
         if (maxX > 0 && maxY > 0) {
@@ -332,35 +391,23 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
-        // Вызывается постоянно, но мы реагируем только если бонус активен
-        if (!isBonusActive || event?.sensor?.type != Sensor.TYPE_ACCELEROMETER) {
-            return
-        }
+        if (!isBonusActive || event?.sensor?.type != Sensor.TYPE_ACCELEROMETER) return
 
         val gravityX = event.values[0]
         val gravityY = event.values[1]
 
         cockroaches.forEach { cockroach ->
-            val bugSize = cockroach.width.toFloat() // Используем реальный размер
-
+            val bugSize = cockroach.width.toFloat()
             var newX = cockroach.x - (gravityX * TILT_SENSITIVITY)
-
             var newY = cockroach.y + (gravityY * TILT_SENSITIVITY)
-
-            // Ограничиваем движение границами
             newX = newX.coerceIn(0f, gameAreaWidth - bugSize)
             newY = newY.coerceIn(0f, gameAreaHeight - bugSize)
-
-            // Применяем новые координаты
             cockroach.x = newX
             cockroach.y = newY
         }
     }
 
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
-        // Не используется, но обязателен для реализации
-    }
-
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     private fun getPlayerFromIntent(): Player? {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
