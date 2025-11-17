@@ -23,14 +23,10 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.example.bugs.managers.PlayerManager
 import com.example.bugs.models.Player
+import com.example.bugs.network.RetrofitClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.URL
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import kotlinx.coroutines.withContext
 import kotlin.random.Random
 
 class GameActivity : AppCompatActivity(), SensorEventListener {
@@ -125,36 +121,37 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
     private fun fetchGoldPrice() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                // Используем тот же метод ручного парсинга для надежности (или Retrofit из шага 2)
-                val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
-                val date = sdf.format(Date())
-                val urlString = "https://www.cbr.ru/scripts/xml_metall.asp?date_req1=$date&date_req2=$date"
+                val dateStart = RetrofitClient.getWeekAgoDate()
+                val dateEnd = RetrofitClient.getTodayDate()
 
-                val url = URL(urlString)
-                val connection = url.openConnection()
-                val reader = BufferedReader(InputStreamReader(connection.getInputStream(), "windows-1251"))
-                val sb = StringBuilder()
-                var line: String?
-                while (reader.readLine().also { line = it } != null) {
-                    sb.append(line)
-                }
-                reader.close()
-                val xml = sb.toString()
+                // Используем Retrofit для запроса
+                val response = RetrofitClient.api.getMetals(dateStart, dateEnd)
 
-                // Парсим цену золота (Code="1")
-                val codeIndex = xml.indexOf("Code=\"1\"")
-                if (codeIndex != -1) {
-                    val buyTag = "<Buy>"
-                    val start = xml.indexOf(buyTag, codeIndex) + buyTag.length
-                    val end = xml.indexOf("</Buy>", start)
-                    if (start > 0 && end > 0) {
-                        val priceStr = xml.substring(start, end).replace(",", ".")
-                        currentGoldPrice = priceStr.toDoubleOrNull() ?: 5000.0
+                // Фильтруем: ищем записи с кодом "1" (Золото)
+                val goldRecords = response.records?.filter { it.code == "1" }
+
+                if (!goldRecords.isNullOrEmpty()) {
+                    // Берем последнюю запись (самую свежую дату)
+                    val lastRecord = goldRecords.last()
+
+                    // ЦБ возвращает цену с запятой (например "5432,56"), меняем на точку
+                    val priceStr = lastRecord.buy.replace(",", ".")
+                    currentGoldPrice = priceStr.toDoubleOrNull() ?: 5000.0
+
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(this@GameActivity, "Курс золота: ${lastRecord.buy}", Toast.LENGTH_SHORT).show()
                     }
+                } else {
+                    // Если список пуст (крайне маловероятно при запросе за неделю)
+                    currentGoldPrice = 5000.0
                 }
+
             } catch (e: Exception) {
                 e.printStackTrace()
-                currentGoldPrice = 5000.0 // Фолбэк значение
+                currentGoldPrice = 5000.0 // Фолбэк значение при ошибке интернета
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@GameActivity, "Ошибка загрузки курса", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }

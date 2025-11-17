@@ -24,48 +24,64 @@ class GoldWidget : AppWidgetProvider() {
     companion object {
         fun updateAppWidget(context: Context, appWidgetManager: AppWidgetManager, appWidgetId: Int) {
             val views = RemoteViews(context.packageName, R.layout.widget_gold)
+            views.setTextViewText(R.id.widget_price_text, "Загрузка...")
+            appWidgetManager.updateAppWidget(appWidgetId, views)
 
-            // Запускаем корутину для загрузки данных
+            // Загрузка в фоне
             CoroutineScope(Dispatchers.IO).launch {
+                var priceDisplay = "Нет сети"
                 try {
-                    // Упрощенный парсинг XML вручную для надежности в виджете,
-                    // так как SimpleXML может конфликтовать внутри Receiver контекста
-                    val date = RetrofitClient.getCurrentDate()
-                    val urlString = "https://www.cbr.ru/scripts/xml_metall.asp?date_req1=$date&date_req2=$date"
+                    // Запрашиваем за неделю, чтобы исключить выходные
+                    val dateStart = RetrofitClient.getWeekAgoDate()
+                    val dateEnd = RetrofitClient.getTodayDate()
+
+                    val urlString = "https://www.cbr.ru/scripts/xml_metall.asp?date_req1=$dateStart&date_req2=$dateEnd"
                     val url = URL(urlString)
+
+                    // Читаем ответ
                     val connection = url.openConnection()
-                    val reader = BufferedReader(InputStreamReader(connection.getInputStream(), "windows-1251"))
+                    connection.connectTimeout = 5000
+                    val reader = BufferedReader(InputStreamReader(connection.getInputStream(), "windows-1251")) // ЦБ использует win-1251
                     val sb = StringBuilder()
                     var line: String?
                     while (reader.readLine().also { line = it } != null) {
                         sb.append(line)
                     }
                     reader.close()
-
                     val xml = sb.toString()
-                    // Ищем код золота "1" и цену Buy
-                    // Это "грязный" хак парсинга, но он работает без тяжелых библиотек в виджете
-                    val codeIndex = xml.indexOf("Code=\"1\"")
-                    var price = "Err"
-                    if (codeIndex != -1) {
+
+                    // Ручной парсинг: ищем последние данные по коду "1" (Золото)
+                    // XML приходит в виде списка <Record Code="1" ...><Buy>5000,00</Buy></Record>...
+                    // Нам нужно найти последнее вхождение Code="1"
+
+                    val codePattern = "Code=\"1\""
+                    val lastIndex = xml.lastIndexOf(codePattern) // Берем самую последнюю запись (свежую дату)
+
+                    if (lastIndex != -1) {
                         val buyTag = "<Buy>"
-                        val start = xml.indexOf(buyTag, codeIndex) + buyTag.length
+                        val start = xml.indexOf(buyTag, lastIndex) + buyTag.length
                         val end = xml.indexOf("</Buy>", start)
                         if (start > 0 && end > 0) {
-                            price = xml.substring(start, end)
+                            val rawPrice = xml.substring(start, end)
+                            // Форматируем: 5432,12 -> 5432 ₽
+                            val cleanPrice = rawPrice.split(",")[0]
+                            priceDisplay = "$cleanPrice ₽"
                         }
-                    }
-
-                    withContext(Dispatchers.Main) {
-                        views.setTextViewText(R.id.widget_price_text, "$price ₽")
-                        appWidgetManager.updateAppWidget(appWidgetId, views)
+                    } else {
+                        priceDisplay = "ЦБ недоступен"
                     }
 
                 } catch (e: Exception) {
                     e.printStackTrace()
+                    priceDisplay = "Ошибка"
+                }
+
+                // Обновляем UI
+                withContext(Dispatchers.Main) {
+                    views.setTextViewText(R.id.widget_price_text, priceDisplay)
+                    appWidgetManager.updateAppWidget(appWidgetId, views)
                 }
             }
-            appWidgetManager.updateAppWidget(appWidgetId, views)
         }
     }
 }
